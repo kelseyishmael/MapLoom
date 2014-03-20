@@ -87,13 +87,14 @@
             };
 
             scope.save = function() {
-              featureDiffService.feature.olFeature.setGeometry(featureDiffService.merged.olFeature.getGeometry());
+              featureDiffService.feature.olFeature.setGeometry(
+                  featureDiffService.merged.getPrimaryFeature().getGeometry());
               featureDiffService.feature.olFeature.set('change', DiffColorMap.MERGED);
               var merges = featureDiffService.getMerges();
-              var geomattributename = featureDiffService.merged.geometry.attributename;
+              var geomattributename = featureDiffService.merged.getPrimaryGeometry().attributename;
               var geomMergeValue = merges[geomattributename];
               conflictService.resolveConflict(merges,
-                  (featureDiffService.merged.geometry.changetype === 'REMOVED' ? geomMergeValue : null));
+                  (featureDiffService.merged.getPrimaryGeometry().changetype === 'REMOVED' ? geomMergeValue : null));
               featureDiffService.clear();
               scope.leftPanel = false;
               scope.rightPanel = false;

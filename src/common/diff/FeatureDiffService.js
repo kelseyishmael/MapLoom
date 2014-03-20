@@ -22,25 +22,53 @@
     this.map = null;
     this.featureLayer = null;
     this.attributes = [];
-    this.bounds = null;
     this.active = false;
-    this.geometry = null;
-    this.olFeature = null;
+    this.geometry = [];
+    this.olFeature = [];
 
     this.clearFeature = function() {
       this.attributes = [];
-      this.bounds = null;
       this.active = false;
-      this.geometry = null;
-      this.olFeature = null;
+      this.geometry = [];
+      this.olFeature = [];
       this.featureLayer.getSource().clear();
     };
 
-    this.getGeometry = function() {
-      if (goog.isDefAndNotNull(this.geometry)) {
-        return goog.isDefAndNotNull(this.geometry.newvalue) ? this.geometry.newvalue : this.geometry.oldvalue;
+    this.getGeometry = function(index) {
+      if (!goog.isDefAndNotNull(index)) {
+        index = 0;
+      }
+      if (goog.isDefAndNotNull(this.geometry) && this.geometry.length > 0) {
+        return goog.isDefAndNotNull(this.geometry[index].newvalue) ? this.geometry[index].newvalue :
+            this.geometry[index].oldvalue;
       }
       return null;
+    };
+
+    this.getPrimaryGeometry = function() {
+      var geomIndex = 0;
+      if (this.geometry.length > 1) {
+        for (var index = 0; index < this.geometry.length; index++) {
+          if (this.geometry[index].attributename == 'Geometry') {
+            geomIndex = index;
+            break;
+          }
+        }
+      }
+      return this.geometry[geomIndex];
+    };
+
+    this.getPrimaryFeature = function() {
+      var geomIndex = 0;
+      if (this.geometry.length > 1) {
+        for (var index = 0; index < this.geometry.length; index++) {
+          if (this.geometry[index].attributename == 'Geometry') {
+            geomIndex = index;
+            break;
+          }
+        }
+      }
+      return this.olFeature[geomIndex];
     };
 
     this.replaceLayers = function(newLayers) {
@@ -197,10 +225,22 @@
 
     this.chooseGeometry = function(panel) {
       this.merged.geometry = panel.geometry;
-      this.merged.bounds = panel.bounds;
-      this.merged.olFeature.setGeometry(panel.olFeature.getGeometry());
-      this.merged.olFeature.set('MapLoomChange', panel.olFeature.get('MapLoomChange'));
-      if (this.left.geometry.changetype === 'REMOVED' || this.right.geometry.changetype === 'REMOVED') {
+      var index;
+      for (index = 0; index < panel.olFeature.length; index++) {
+        this.merged.olFeature[index].setGeometry(panel.olFeature[index].getGeometry());
+        this.merged.olFeature[index].set('MapLoomChange', panel.olFeature[index].get('MapLoomChange'));
+      }
+      var geomIndex = 0;
+      if (panel.geometry.length > 1) {
+        for (index = 0; index < panel.geometry.length; index++) {
+          if (panel.geometry[index].attributename == 'Geometry') {
+            geomIndex = index;
+            break;
+          }
+        }
+      }
+      if (this.left.geometry[geomIndex].changetype === 'REMOVED' ||
+          this.right.geometry[geomIndex].changetype === 'REMOVED') {
         this.merged.attributes = $.extend(true, [], panel.attributes);
       }
       rootScope_.$broadcast('merge-feature-modified');
@@ -367,10 +407,11 @@
         case 'CONFLICT':
           diffsNeeded_ = 2;
           service_.merged.active = true;
-          service_.merged.olFeature = new ol.Feature();
-          service_.merged.olFeature.set('MapLoomChange', DiffColorMap[feature.change]);
-          service_.merged.olFeature.setGeometry(geom);
-          service_.merged.featureLayer.getSource().addFeature(service_.merged.olFeature);
+          var olFeature = new ol.Feature();
+          olFeature.set('MapLoomChange', DiffColorMap[feature.change]);
+          olFeature.setGeometry(geom);
+          service_.merged.olFeature.push(olFeature);
+          service_.merged.featureLayer.getSource().addFeature(olFeature);
           service_.performFeatureDiff(feature, ours_, ancestor_, service_.left);
           service_.performFeatureDiff(feature, theirs_, ancestor_, service_.right);
           break;
@@ -404,29 +445,32 @@
             }
             panel.attributes.push(item);
           } else {
-            if (!goog.isDefAndNotNull(panel.geometry) &&
-                (goog.isDefAndNotNull(item.newvalue) || goog.isDefAndNotNull(item.oldvalue))) {
-              panel.geometry = item;
+            if (goog.isDefAndNotNull(item.newvalue) || goog.isDefAndNotNull(item.oldvalue)) {
+              panel.geometry.push(item);
             }
           }
         });
 
-        var geom = WKT.read(panel.getGeometry());
+        for (var index = 0; index < panel.geometry.length; index++) {
+          var geom = panel.getGeometry(index);
+          var olGeom = WKT.read(geom);
 
-        var localCrs = crs_;
-        if (goog.isDefAndNotNull(panel.geometry.crs)) {
-          localCrs = panel.geometry.crs;
+          var localCrs = crs_;
+          if (goog.isDefAndNotNull(geom.crs)) {
+            localCrs = geom.crs;
+          }
+          if (goog.isDefAndNotNull(localCrs)) {
+            var transform = ol.proj.getTransform(localCrs, panel.map.getView().getView2D().getProjection());
+            olGeom.transform(transform);
+          }
+          var olFeature = new ol.Feature();
+          olFeature.set('MapLoomChange', DiffColorMap[geom.changetype]);
+          olFeature.setGeometry(olGeom);
+          panel.featureLayer.getSource().addFeature(olFeature);
+          panel.olFeature.push(olFeature);
+          ol.extent.extend(service_.combinedExtent, olGeom.getExtent());
         }
-        if (goog.isDefAndNotNull(localCrs)) {
-          var transform = ol.proj.getTransform(localCrs, panel.map.getView().getView2D().getProjection());
-          geom.transform(transform);
-        }
-        var olFeature = new ol.Feature();
-        olFeature.set('MapLoomChange', DiffColorMap[panel.geometry.changetype]);
-        olFeature.setGeometry(geom);
-        panel.featureLayer.getSource().addFeature(olFeature);
-        panel.olFeature = olFeature;
-        ol.extent.extend(service_.combinedExtent, geom.getExtent());
+
         diffsNeeded_ -= 1;
         assignAttributeTypes(panel.attributes, false);
         if (diffsNeeded_ === 0) {
@@ -436,7 +480,7 @@
             if (feature.change == 'CONFLICT') {
               service_.merged.attributes = $.extend(true, [], service_.left.attributes);
               if (goog.isDefAndNotNull(feature.merges)) {
-                var geomattributename = panel.geometry.attributename;
+                var geomattributename = panel.geometry[0].attributename;
                 var geomMergeValue = feature.merges[geomattributename];
                 if (geomMergeValue.ours === true) {
                   service_.chooseGeometry(service_.left);
